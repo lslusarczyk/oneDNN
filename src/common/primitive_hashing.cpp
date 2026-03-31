@@ -28,6 +28,11 @@ namespace dnnl {
 namespace impl {
 namespace primitive_hashing {
 
+std::shared_ptr<const std::vector<memory_desc_t>> empty_hint_mds_ptr() {
+    static const auto p = std::make_shared<const std::vector<memory_desc_t>>();
+    return p;
+}
+
 namespace {
 size_t compute_key_hash(const key_t &key) {
     size_t seed = 0;
@@ -38,7 +43,8 @@ size_t compute_key_hash(const key_t &key) {
     seed = hash_combine(seed, hash_combine(0, key.impl_nthr_));
     seed = hash_combine(seed, hash_combine(0, key.skip_idx_));
     seed = hash_combine(seed, key.engine_id_.hash());
-    seed = get_array_hash(seed, key.hint_mds_.data(), (int)key.hint_mds_.size());
+    seed = get_array_hash(seed, key.hint_mds_ptr_->data(),
+            (int)key.hint_mds_ptr_->size());
 
     // Combine hash for op_desc with the computed hash
 #define CASE(pkind) \
@@ -78,27 +84,45 @@ size_t compute_key_hash(const key_t &key) {
 
     return seed;
 }
+
+std::shared_ptr<const std::vector<memory_desc_t>> hint_mds_to_shared(
+        std::vector<memory_desc_t> v) {
+    if (v.empty()) return empty_hint_mds_ptr();
+    return std::make_shared<const std::vector<memory_desc_t>>(std::move(v));
+}
 } // namespace
 
 key_t::key_t(const engine_t *engine, const op_desc_t *op_desc,
         const primitive_attr_t *attr, int pd_iterator_offset,
-        const std::vector<memory_desc_t> &hint_mds, int skip_idx)
+        std::shared_ptr<const std::vector<memory_desc_t>> hint_mds,
+        int skip_idx)
     : primitive_kind_(op_desc->primitive_kind)
     , op_desc_(op_desc)
     , attr_(attr)
     , pd_iterator_offset_(pd_iterator_offset)
     , impl_nthr_(dnnl_get_max_threads())
     , skip_idx_(skip_idx)
-    , hint_mds_(hint_mds)
+    , hint_mds_ptr_(hint_mds ? std::move(hint_mds) : empty_hint_mds_ptr())
     , engine_id_(engine->engine_id())
     , hash_(0)
     , thread_id_(std::this_thread::get_id()) {
     hash_ = compute_key_hash(*this);
 }
 
+key_t::key_t(const engine_t *engine, const op_desc_t *op_desc,
+        const primitive_attr_t *attr, int pd_iterator_offset,
+        const std::vector<memory_desc_t> &hint_mds, int skip_idx)
+    : key_t(engine, op_desc, attr, pd_iterator_offset,
+            hint_mds.empty()
+                    ? empty_hint_mds_ptr()
+                    : std::make_shared<const std::vector<memory_desc_t>>(
+                            hint_mds),
+            skip_idx) {}
+
 key_t::key_t(const primitive_desc_t *pd, const engine_t *engine)
     : key_t(engine, pd->op_desc(), pd->attr(), pd->pd_iterator_offset(),
-              pd->hint_mds(false /* is_hint */), pd->skip_idx()) {}
+              hint_mds_to_shared(pd->hint_mds(false /* is_hint */)),
+              pd->skip_idx()) {}
 
 bool key_t::operator==(const key_t &rhs) const {
     DNNL_SHORT_CIRCUIT_SELF_COMPARISON(rhs);
@@ -107,13 +131,12 @@ bool key_t::operator==(const key_t &rhs) const {
         // Less expensive comparisons come first
         && primitive_kind_ == rhs.primitive_kind_
         && engine_id_ == rhs.engine_id_
-        && hint_mds_.size() == rhs.hint_mds_.size()
         && pd_iterator_offset_ == rhs.pd_iterator_offset_
         && impl_nthr_ == rhs.impl_nthr_
         && skip_idx_ == rhs.skip_idx_
         && (*attr_) == (*rhs.attr_)
-        && std::equal(
-            hint_mds_.begin(), hint_mds_.end(), rhs.hint_mds_.begin());
+        && (hint_mds_ptr_ == rhs.hint_mds_ptr_
+                || *hint_mds_ptr_ == *rhs.hint_mds_ptr_);
 
     if (!ret) {
         // ANCHOR: HASHING_DEBUGINFO_16.

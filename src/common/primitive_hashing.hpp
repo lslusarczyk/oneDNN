@@ -17,9 +17,11 @@
 #ifndef COMMON_PRIMITIVE_HASHING_HPP
 #define COMMON_PRIMITIVE_HASHING_HPP
 
+#include <memory>
 #include <thread>
 #include <typeindex>
 #include <type_traits>
+#include <vector>
 
 #include "common/c_types_map.hpp"
 #include "common/engine_id.hpp"
@@ -32,10 +34,18 @@ namespace impl {
 struct primitive_desc_t;
 namespace primitive_hashing {
 
+// Shared by all keys with no hint memory descriptors (avoids per-key vector).
+std::shared_ptr<const std::vector<memory_desc_t>> empty_hint_mds_ptr();
+
 struct key_t {
     key_t(const engine_t *engine, const op_desc_t *op_desc,
             const primitive_attr_t *attr, int pd_iterator_offset,
             const std::vector<memory_desc_t> &hint_mds, int skip_idx);
+
+    key_t(const engine_t *engine, const op_desc_t *op_desc,
+            const primitive_attr_t *attr, int pd_iterator_offset,
+            std::shared_ptr<const std::vector<memory_desc_t>> hint_mds,
+            int skip_idx);
 
     key_t(const primitive_desc_t *pd, const engine_t *engine);
 
@@ -55,7 +65,7 @@ struct key_t {
     int pd_iterator_offset_;
     int impl_nthr_;
     int skip_idx_;
-    std::vector<memory_desc_t> hint_mds_;
+    std::shared_ptr<const std::vector<memory_desc_t>> hint_mds_ptr_;
     engine_id_t engine_id_;
     size_t hash_ = 0;
 
