@@ -28,6 +28,58 @@ namespace dnnl {
 namespace impl {
 namespace primitive_hashing {
 
+namespace {
+size_t compute_key_hash(const key_t &key) {
+    size_t seed = 0;
+    seed = hash_combine(
+            seed, hash_combine(0, static_cast<size_t>(key.primitive_kind_)));
+    seed = hash_combine(seed, get_attr_hash(*key.attr_));
+    seed = hash_combine(seed, hash_combine(0, key.pd_iterator_offset_));
+    seed = hash_combine(seed, hash_combine(0, key.impl_nthr_));
+    seed = hash_combine(seed, hash_combine(0, key.skip_idx_));
+    seed = hash_combine(seed, key.engine_id_.hash());
+    seed = get_array_hash(seed, key.hint_mds_.data(), (int)key.hint_mds_.size());
+
+    // Combine hash for op_desc with the computed hash
+#define CASE(pkind) \
+    case primitive_kind::pkind: \
+        seed = hash_combine(seed, \
+                get_desc_hash(*op_desc_t::to_desc<pkind##_desc_t>(key.op_desc_))); \
+        break;
+
+    switch ((int)key.primitive_kind_) {
+        CASE(batch_normalization)
+        CASE(binary)
+        CASE(concat)
+        CASE(convolution)
+        CASE(deconvolution)
+        CASE(eltwise)
+        CASE(gated_mlp)
+        CASE(gemm)
+        CASE(group_normalization)
+        CASE(inner_product)
+        CASE(layer_normalization)
+        CASE(lrn)
+        CASE(matmul)
+        CASE(pooling)
+        CASE(prelu)
+        CASE(reduction)
+        CASE(reorder)
+        CASE(resampling)
+        CASE(rnn)
+        CASE(sdpa)
+        CASE(shuffle)
+        CASE(softmax)
+        CASE(sum)
+        CASE(zero_pad)
+        default: assert(!"unknown primitive_kind");
+    }
+#undef CASE
+
+    return seed;
+}
+} // namespace
+
 key_t::key_t(const engine_t *engine, const op_desc_t *op_desc,
         const primitive_attr_t *attr, int pd_iterator_offset,
         const std::vector<memory_desc_t> &hint_mds, int skip_idx)
@@ -39,7 +91,10 @@ key_t::key_t(const engine_t *engine, const op_desc_t *op_desc,
     , skip_idx_(skip_idx)
     , hint_mds_(hint_mds)
     , engine_id_(engine->engine_id())
-    , thread_id_(std::this_thread::get_id()) {}
+    , hash_(0)
+    , thread_id_(std::this_thread::get_id()) {
+    hash_ = compute_key_hash(*this);
+}
 
 key_t::key_t(const primitive_desc_t *pd, const engine_t *engine)
     : key_t(engine, pd->op_desc(), pd->attr(), pd->pd_iterator_offset(),
