@@ -48,6 +48,8 @@ struct primitive_desc_iterator_t : public c_compatible {
 
         while (impl_list_[last_idx_])
             ++last_idx_;
+        if (hint_fwd_pd_)
+            hint_mds_cache_ = hint_fwd_pd_->hint_mds(true /* is_hint */);
         is_initialized_ = is_initialized_ && attr_.is_initialized();
     }
 
@@ -72,10 +74,8 @@ struct primitive_desc_iterator_t : public c_compatible {
         offset_++;
         pd_.reset();
 
-        std::vector<dnnl::impl::memory_desc_t> hint_mds;
-        if (hint_fwd_pd_) hint_mds = hint_fwd_pd_->hint_mds(true /* is_hint */);
-        primitive_hashing::key_t key(
-                engine_, op_desc_.get(), &attr_, offset_, hint_mds, skip_idx_);
+        primitive_hashing::key_t key(engine_, op_desc_.get(), &attr_, offset_,
+                hint_mds_cache_, skip_idx_);
 
         pd_ = primitive_cache().get_pd(key);
         if (pd_) { return *this; }
@@ -110,6 +110,9 @@ protected:
     int last_idx_;
     int skip_idx_;
     int offset_;
+    // hint_fwd_pd_ is fixed for the lifetime of the iterator; cache hint MDs
+    // once instead of rebuilding on every operator++ (virtual call + vector).
+    std::vector<memory_desc_t> hint_mds_cache_;
 
 private:
     primitive_desc_iterator_t(engine_t *engine, int last_idx)
@@ -129,8 +132,10 @@ private:
         , attr_(other.attr_)
         , hint_fwd_pd_(other.hint_fwd_pd_)
         , impl_list_(other.impl_list_)
+        , last_idx_(other.last_idx_)
         , skip_idx_(other.skip_idx_)
-        , offset_(other.offset_) {}
+        , offset_(other.offset_)
+        , hint_mds_cache_(std::move(other.hint_mds_cache_)) {}
 
     DNNL_DISALLOW_COPY_AND_ASSIGN(primitive_desc_iterator_t);
 };
