@@ -85,7 +85,8 @@ struct primitive_desc_iterator_t : public c_compatible {
         pd_.reset();
 
         primitive_hashing::key_t key(engine_, op_desc_.get(), &attr_, offset_,
-                hint_mds_ptr_, skip_idx_);
+                primitive_hashing::shared_hint_mds_tag, hint_mds_ptr_,
+                skip_idx_);
 
         pd_ = primitive_cache().get_pd(key);
         if (pd_) { return *this; }

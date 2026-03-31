@@ -94,6 +94,7 @@ std::shared_ptr<const std::vector<memory_desc_t>> hint_mds_to_shared(
 
 key_t::key_t(const engine_t *engine, const op_desc_t *op_desc,
         const primitive_attr_t *attr, int pd_iterator_offset,
+        shared_hint_mds_tag_t /* tag */,
         std::shared_ptr<const std::vector<memory_desc_t>> hint_mds,
         int skip_idx)
     : primitive_kind_(op_desc->primitive_kind)
@@ -112,7 +113,7 @@ key_t::key_t(const engine_t *engine, const op_desc_t *op_desc,
 key_t::key_t(const engine_t *engine, const op_desc_t *op_desc,
         const primitive_attr_t *attr, int pd_iterator_offset,
         const std::vector<memory_desc_t> &hint_mds, int skip_idx)
-    : key_t(engine, op_desc, attr, pd_iterator_offset,
+    : key_t(engine, op_desc, attr, pd_iterator_offset, shared_hint_mds_tag,
             hint_mds.empty()
                     ? empty_hint_mds_ptr()
                     : std::make_shared<const std::vector<memory_desc_t>>(
@@ -121,6 +122,7 @@ key_t::key_t(const engine_t *engine, const op_desc_t *op_desc,
 
 key_t::key_t(const primitive_desc_t *pd, const engine_t *engine)
     : key_t(engine, pd->op_desc(), pd->attr(), pd->pd_iterator_offset(),
+              shared_hint_mds_tag,
               hint_mds_to_shared(pd->hint_mds(false /* is_hint */)),
               pd->skip_idx()) {}
 

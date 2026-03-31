@@ -37,6 +37,11 @@ namespace primitive_hashing {
 // Shared by all keys with no hint memory descriptors (avoids per-key vector).
 std::shared_ptr<const std::vector<memory_desc_t>> empty_hint_mds_ptr();
 
+// Disambiguates key_t(..., {}, skip) from shared_ptr (value-initialized as
+// nullptr); pass shared_hint_mds_tag when reusing a shared hint vector.
+struct shared_hint_mds_tag_t {};
+inline constexpr shared_hint_mds_tag_t shared_hint_mds_tag {};
+
 struct key_t {
     key_t(const engine_t *engine, const op_desc_t *op_desc,
             const primitive_attr_t *attr, int pd_iterator_offset,
@@ -44,6 +49,7 @@ struct key_t {
 
     key_t(const engine_t *engine, const op_desc_t *op_desc,
             const primitive_attr_t *attr, int pd_iterator_offset,
+            shared_hint_mds_tag_t,
             std::shared_ptr<const std::vector<memory_desc_t>> hint_mds,
             int skip_idx);
 
