@@ -17,11 +17,9 @@
 #ifndef COMMON_PRIMITIVE_HASHING_HPP
 #define COMMON_PRIMITIVE_HASHING_HPP
 
-#include <memory>
 #include <thread>
 #include <typeindex>
 #include <type_traits>
-#include <vector>
 
 #include "common/c_types_map.hpp"
 #include "common/engine_id.hpp"
@@ -34,29 +32,14 @@ namespace impl {
 struct primitive_desc_t;
 namespace primitive_hashing {
 
-// Shared by all keys with no hint memory descriptors (avoids per-key vector).
-std::shared_ptr<const std::vector<memory_desc_t>> empty_hint_mds_ptr();
-
-// Disambiguates key_t(..., {}, skip) from shared_ptr (value-initialized as
-// nullptr); pass shared_hint_mds_tag when reusing a shared hint vector.
-struct shared_hint_mds_tag_t {};
-inline constexpr shared_hint_mds_tag_t shared_hint_mds_tag {};
-
 struct key_t {
     key_t(const engine_t *engine, const op_desc_t *op_desc,
             const primitive_attr_t *attr, int pd_iterator_offset,
             const std::vector<memory_desc_t> &hint_mds, int skip_idx);
 
-    key_t(const engine_t *engine, const op_desc_t *op_desc,
-            const primitive_attr_t *attr, int pd_iterator_offset,
-            shared_hint_mds_tag_t,
-            std::shared_ptr<const std::vector<memory_desc_t>> hint_mds,
-            int skip_idx);
-
     key_t(const primitive_desc_t *pd, const engine_t *engine);
 
     bool operator==(const key_t &other) const;
-    size_t hash() const { return hash_; }
     const std::thread::id &thread_id() const { return thread_id_; }
     bool has_runtime_dependencies() const {
         return !(engine_id_.kind() == engine_kind::cpu
@@ -71,9 +54,8 @@ struct key_t {
     int pd_iterator_offset_;
     int impl_nthr_;
     int skip_idx_;
-    std::shared_ptr<const std::vector<memory_desc_t>> hint_mds_ptr_;
+    std::vector<memory_desc_t> hint_mds_;
     engine_id_t engine_id_;
-    size_t hash_ = 0;
 
 private:
     static primitive_kind_t get_pkind(primitive_kind_t pkind);
@@ -154,7 +136,72 @@ struct hash<dnnl::impl::primitive_hashing::key_t> {
     using argument_type = dnnl::impl::primitive_hashing::key_t;
     using result_type = std::size_t;
     result_type operator()(const argument_type &key) const {
-        return key.hash();
+        using namespace dnnl::impl;
+        using namespace dnnl::impl::primitive_hashing;
+        size_t seed = 0;
+        // Compute hash for primitive_kind_, attr_, impl_id_ and impl_nthr_
+        seed = hash_combine(seed,
+                hash_combine(0, static_cast<size_t>(key.primitive_kind_)));
+        seed = hash_combine(seed, get_attr_hash(*key.attr_));
+        seed = hash_combine(seed, hash_combine(0, key.pd_iterator_offset_));
+        seed = hash_combine(seed, hash_combine(0, key.impl_nthr_));
+        seed = hash_combine(seed, hash_combine(0, key.skip_idx_));
+
+        seed = hash_combine(seed, key.engine_id_.hash());
+
+        seed = get_array_hash(
+                seed, key.hint_mds_.data(), (int)key.hint_mds_.size());
+
+        const result_type verb_seed_before_desc = seed;
+        UNUSED(verb_seed_before_desc);
+
+        // Combine hash for op_desc with the computed hash
+#define CASE(pkind) \
+    case primitive_kind::pkind: \
+        seed = hash_combine(seed, \
+                get_desc_hash( \
+                        *op_desc_t::to_desc<pkind##_desc_t>(key.op_desc_))); \
+        break;
+
+        // clang-format off
+        switch ((int)key.primitive_kind_) {
+            CASE(batch_normalization)
+            CASE(binary)
+            CASE(concat)
+            CASE(convolution)
+            CASE(deconvolution)
+            CASE(eltwise)
+            CASE(gated_mlp)
+            CASE(gemm)
+            CASE(group_normalization)
+            CASE(inner_product)
+            CASE(layer_normalization)
+            CASE(lrn)
+            CASE(matmul)
+            CASE(pooling)
+            CASE(prelu)
+            CASE(reduction)
+            CASE(reorder)
+            CASE(resampling)
+            CASE(rnn)
+            CASE(sdpa)
+            CASE(shuffle)
+            CASE(softmax)
+            CASE(sum)
+            CASE(zero_pad)
+            default: assert(!"unknown primitive_kind");
+        }
+            // clang-format on
+#undef CASE
+
+        // Note: `16` is just a random number, as debuginfo hasn't received a
+        // single command center for levels across layers of the library.
+        // ANCHOR: HASHING_DEBUGINFO_16.
+        VDEBUGINFO(16, primitive, hashing,
+                "operator(),seed_before_desc=%zu seed_after_desc=%zu",
+                verb_seed_before_desc, seed);
+
+        return seed;
     }
 };
 

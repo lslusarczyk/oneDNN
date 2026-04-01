@@ -28,103 +28,22 @@ namespace dnnl {
 namespace impl {
 namespace primitive_hashing {
 
-std::shared_ptr<const std::vector<memory_desc_t>> empty_hint_mds_ptr() {
-    static const auto p = std::make_shared<const std::vector<memory_desc_t>>();
-    return p;
-}
-
-namespace {
-size_t compute_key_hash(const key_t &key) {
-    size_t seed = 0;
-    seed = hash_combine(
-            seed, hash_combine(0, static_cast<size_t>(key.primitive_kind_)));
-    seed = hash_combine(seed, get_attr_hash(*key.attr_));
-    seed = hash_combine(seed, hash_combine(0, key.pd_iterator_offset_));
-    seed = hash_combine(seed, hash_combine(0, key.impl_nthr_));
-    seed = hash_combine(seed, hash_combine(0, key.skip_idx_));
-    seed = hash_combine(seed, key.engine_id_.hash());
-    seed = get_array_hash(seed, key.hint_mds_ptr_->data(),
-            (int)key.hint_mds_ptr_->size());
-
-    // Combine hash for op_desc with the computed hash
-#define CASE(pkind) \
-    case primitive_kind::pkind: \
-        seed = hash_combine(seed, \
-                get_desc_hash(*op_desc_t::to_desc<pkind##_desc_t>(key.op_desc_))); \
-        break;
-
-    switch ((int)key.primitive_kind_) {
-        CASE(batch_normalization)
-        CASE(binary)
-        CASE(concat)
-        CASE(convolution)
-        CASE(deconvolution)
-        CASE(eltwise)
-        CASE(gated_mlp)
-        CASE(gemm)
-        CASE(group_normalization)
-        CASE(inner_product)
-        CASE(layer_normalization)
-        CASE(lrn)
-        CASE(matmul)
-        CASE(pooling)
-        CASE(prelu)
-        CASE(reduction)
-        CASE(reorder)
-        CASE(resampling)
-        CASE(rnn)
-        CASE(sdpa)
-        CASE(shuffle)
-        CASE(softmax)
-        CASE(sum)
-        CASE(zero_pad)
-        default: assert(!"unknown primitive_kind");
-    }
-#undef CASE
-
-    return seed;
-}
-
-std::shared_ptr<const std::vector<memory_desc_t>> hint_mds_to_shared(
-        std::vector<memory_desc_t> v) {
-    if (v.empty()) return empty_hint_mds_ptr();
-    return std::make_shared<const std::vector<memory_desc_t>>(std::move(v));
-}
-} // namespace
-
 key_t::key_t(const engine_t *engine, const op_desc_t *op_desc,
         const primitive_attr_t *attr, int pd_iterator_offset,
-        shared_hint_mds_tag_t /* tag */,
-        std::shared_ptr<const std::vector<memory_desc_t>> hint_mds,
-        int skip_idx)
+        const std::vector<memory_desc_t> &hint_mds, int skip_idx)
     : primitive_kind_(op_desc->primitive_kind)
     , op_desc_(op_desc)
     , attr_(attr)
     , pd_iterator_offset_(pd_iterator_offset)
     , impl_nthr_(dnnl_get_max_threads())
     , skip_idx_(skip_idx)
-    , hint_mds_ptr_(hint_mds ? std::move(hint_mds) : empty_hint_mds_ptr())
+    , hint_mds_(hint_mds)
     , engine_id_(engine->engine_id())
-    , hash_(0)
-    , thread_id_(std::this_thread::get_id()) {
-    hash_ = compute_key_hash(*this);
-}
-
-key_t::key_t(const engine_t *engine, const op_desc_t *op_desc,
-        const primitive_attr_t *attr, int pd_iterator_offset,
-        const std::vector<memory_desc_t> &hint_mds, int skip_idx)
-    : key_t(engine, op_desc, attr, pd_iterator_offset, shared_hint_mds_tag,
-            hint_mds.empty()
-                    ? empty_hint_mds_ptr()
-                    : std::make_shared<const std::vector<memory_desc_t>>(
-                            hint_mds),
-            skip_idx) {}
+    , thread_id_(std::this_thread::get_id()) {}
 
 key_t::key_t(const primitive_desc_t *pd, const engine_t *engine)
     : key_t(engine, pd->op_desc(), pd->attr(), pd->pd_iterator_offset(),
-              shared_hint_mds_tag,
-              hint_mds_to_shared(pd->hint_mds(false /* is_hint */)),
-              pd->skip_idx()) {}
+              pd->hint_mds(false /* is_hint */), pd->skip_idx()) {}
 
 bool key_t::operator==(const key_t &rhs) const {
     DNNL_SHORT_CIRCUIT_SELF_COMPARISON(rhs);
@@ -133,12 +52,13 @@ bool key_t::operator==(const key_t &rhs) const {
         // Less expensive comparisons come first
         && primitive_kind_ == rhs.primitive_kind_
         && engine_id_ == rhs.engine_id_
+        && hint_mds_.size() == rhs.hint_mds_.size()
         && pd_iterator_offset_ == rhs.pd_iterator_offset_
         && impl_nthr_ == rhs.impl_nthr_
         && skip_idx_ == rhs.skip_idx_
         && (*attr_) == (*rhs.attr_)
-        && (hint_mds_ptr_ == rhs.hint_mds_ptr_
-                || *hint_mds_ptr_ == *rhs.hint_mds_ptr_);
+        && std::equal(
+            hint_mds_.begin(), hint_mds_.end(), rhs.hint_mds_.begin());
 
     if (!ret) {
         // ANCHOR: HASHING_DEBUGINFO_16.
